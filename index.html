@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Keto Tracker</title>
+  <meta name="description" content="Track keto macros, net carbs and calories. Scan barcodes with Open Food Facts.">
+  <meta name="theme-color" content="#15803d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Keto Tracker">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="viewTitle">Today</h1>
+  </header>
+
+  <main id="main">
+    <!-- TODAY / DASHBOARD -->
+    <section id="view-today" class="view active" aria-label="Today">
+      <div class="datenav">
+        <button id="prevDay" class="icon-btn" aria-label="Previous day">&#8249;</button>
+        <div class="datenav-mid">
+          <div id="dateLabel" class="date-main">Today</div>
+          <div id="dateSub" class="date-sub"></div>
+        </div>
+        <button id="nextDay" class="icon-btn" aria-label="Next day">&#8250;</button>
+      </div>
+      <button id="todayBtn" class="pill-btn" hidden>Back to today</button>
+
+      <div id="installHint" class="card hint-card" hidden>
+        <div><strong>Install on your iPhone:</strong> tap the Share button <span class="share-glyph" aria-hidden="true">&#x2B06;&#xFE0E;</span> in Safari, then <em>Add to Home Screen</em>.</div>
+        <button id="dismissInstall" class="icon-btn small" aria-label="Dismiss">&times;</button>
+      </div>
+      <div id="backupHint" class="card hint-card warn" hidden>
+        <div>Your log is only stored on this phone. <a href="#" id="backupHintLink">Back up now</a> in case Safari data is cleared.</div>
+      </div>
+
+      <div id="statusCard" class="card status"></div>
+
+      <div class="card hero">
+        <div id="kcalRing" class="hero-ring"></div>
+        <div class="hero-stats">
+          <div class="stat"><span class="stat-label">Eaten</span><span id="kcalEaten" class="stat-val">0</span></div>
+          <div class="stat"><span class="stat-label">Target</span><span id="kcalTarget" class="stat-val">0</span></div>
+          <div class="stat"><span class="stat-label" id="kcalLeftLabel">Remaining</span><span id="kcalLeft" class="stat-val">0</span></div>
+          <div class="stat"><span class="stat-label">Fibre</span><span id="fibreEaten" class="stat-val">0 g</span></div>
+        </div>
+      </div>
+
+      <div id="macroGrid" class="macro-grid"></div>
+
+      <div class="card">
+        <h2 class="card-title">Calories from each macro</h2>
+        <div id="splitBars"></div>
+      </div>
+
+      <div id="meals"></div>
+    </section>
+
+    <!-- ADD FOOD -->
+    <section id="view-add" class="view" aria-label="Add food">
+      <div class="card">
+        <div class="field-label">Add to meal</div>
+        <div id="mealSeg" class="seg seg-4" role="group" aria-label="Meal"></div>
+        <div id="addDateNote" class="muted small mt8"></div>
+      </div>
+
+      <div class="card scan-card">
+        <div id="reader" hidden></div>
+        <div id="scanStatus" class="muted small center" hidden>Point the camera at the barcode…</div>
+        <button id="scanBtn" class="btn primary big" type="button"><span aria-hidden="true">&#128247;</span> Scan barcode</button>
+        <button id="stopScanBtn" class="btn big outline" type="button" hidden>Stop camera</button>
+        <form id="barcodeForm" class="row mt12" autocomplete="off">
+          <input id="barcodeInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="14" placeholder="Or type the barcode number" aria-label="Barcode number">
+          <button class="btn" type="submit">Look up</button>
+        </form>
+        <div id="lookupSpinner" class="muted small center mt8" hidden><span class="spinner"></span> Looking up on Open Food Facts…</div>
+      </div>
+
+      <button id="manualBtn" class="btn big outline block" type="button"><span aria-hidden="true">&#9998;</span> Enter food manually</button>
+
+      <div class="card">
+        <div id="foodTabs" class="seg seg-3" role="tablist">
+          <button type="button" data-tab="recent" class="active">Recent</button>
+          <button type="button" data-tab="frequent">Frequent</button>
+          <button type="button" data-tab="mine">My foods</button>
+        </div>
+        <input id="foodSearch" class="mt12" type="search" placeholder="Search my foods" aria-label="Search my foods" hidden>
+        <div id="foodList" class="food-list mt8"></div>
+      </div>
+    </section>
+
+    <!-- HISTORY -->
+    <section id="view-history" class="view" aria-label="History">
+      <div id="rangeSeg" class="seg seg-2">
+        <button type="button" data-range="7" class="active">Last 7 days</button>
+        <button type="button" data-range="30">Last 30 days</button>
+      </div>
+      <div id="streakCard" class="card streak"></div>
+      <div id="avgCard" class="card"></div>
+      <div class="card">
+        <h2 class="card-title">Net carbs per day</h2>
+        <div id="carbChart" class="chart"></div>
+      </div>
+      <div class="card">
+        <h2 class="card-title">Daily breakdown</h2>
+        <div id="dayList" class="day-list"></div>
+      </div>
+    </section>
+
+    <!-- BODY & GOALS -->
+    <section id="view-body" class="view" aria-label="Body and goals">
+      <div class="card">
+        <h2 class="card-title">Profile</h2>
+        <div id="bSexSeg" class="seg seg-2">
+          <button type="button" data-sex="male">Male</button>
+          <button type="button" data-sex="female">Female</button>
+        </div>
+        <div class="two mt12">
+          <label class="field"><span class="field-label">Age</span><input id="bAge" type="number" inputmode="numeric" min="14" max="100" placeholder="years"></label>
+          <div class="field"><span class="field-label">Height <span class="unit-toggle" id="hUnitSeg"><button type="button" data-u="cm">cm</button><button type="button" data-u="ftin">ft/in</button></span></span>
+            <div id="heightInputs"></div></div>
+        </div>
+        <label class="field">
+          <span class="field-label">Activity level</span>
+          <select id="bActivity">
+            <option value="1.2">Sedentary (desk job, little exercise)</option>
+            <option value="1.375">Lightly active (exercise 1–3 days/week)</option>
+            <option value="1.55">Moderately active (3–5 days/week)</option>
+            <option value="1.725">Very active (6–7 days/week)</option>
+            <option value="1.9">Extremely active (physical job + training)</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Log a weigh-in</h2>
+        <div class="two">
+          <label class="field"><span class="field-label">Date</span><input id="wDate" type="date"></label>
+          <div class="field"><span class="field-label">Weight <span class="unit-toggle" id="wUnitSeg"><button type="button" data-u="kg">kg</button><button type="button" data-u="stlb">st/lb</button></span></span>
+            <div id="weightInputs"></div></div>
+        </div>
+        <div class="pct-grid">
+          <label class="field"><span class="field-label">Body fat %</span><input id="wBf" type="number" inputmode="decimal" min="3" max="70" step="0.1"></label>
+          <label class="field"><span class="field-label">Muscle %</span><input id="wMuscle" type="number" inputmode="decimal" min="10" max="90" step="0.1"></label>
+          <label class="field"><span class="field-label">Water %</span><input id="wWater" type="number" inputmode="decimal" min="20" max="80" step="0.1"></label>
+        </div>
+        <p class="muted small">From your smart scales – fat, muscle and water are optional. Home scales’ body-composition readings are noisy (hydration, time of day), so the app uses a 7-day rolling average trend rather than any single reading. Weigh at the same time each day for best results.</p>
+        <button id="wSave" class="btn primary big" type="button">Save weigh-in</button>
+      </div>
+
+      <div class="card" id="importCard">
+        <h2 class="card-title">Import from scales</h2>
+        <p class="muted small">iPhone web apps can’t connect to Bluetooth scales directly, so readings come in via your scale’s own app (Renpho, Withings, Eufy, Fitbit, Garmin…) – usually through Apple Health.</p>
+        <button id="shortcutHelpBtn" class="btn primary block" type="button"><span aria-hidden="true">&#9889;&#xFE0E;</span> Set up one-tap import (Apple Health)</button>
+        <button id="clipImportBtn" class="btn outline block mt8" type="button"><span aria-hidden="true">&#128203;&#xFE0E;</span> Paste weigh-in from clipboard</button>
+        <details id="pasteDetails" class="mt12"><summary>Paste text from your scale app</summary>
+          <textarea id="pasteText" rows="4" placeholder="e.g. Weight 82.4 kg · Body fat 24.1% · Muscle 38.2% · Body water 55.0%"></textarea>
+          <button id="pasteBtn" class="btn block mt8" type="button">Find readings in text</button>
+        </details>
+        <details id="csvDetails"><summary>Import a CSV export</summary>
+          <p class="small muted">Most scale apps and their websites can export your history as a CSV file – look for “Export data” or “Download my data” in the app’s settings. Save it to Files, then choose it here. Columns are detected automatically; same-day duplicates and readings already in your log are skipped. <a href="sample-scales.csv" download>Download a sample CSV</a>.</p>
+          <button id="csvBtn" class="btn block" type="button">Choose CSV file</button>
+          <input id="csvFile" type="file" accept=".csv,text/csv,text/plain" hidden>
+        </details>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Current trend <span class="muted small">(7-day average)</span></h2>
+        <div id="bodyStats"></div>
+        <div id="weightChart" class="mt12"></div>
+        <details class="mt12"><summary class="small">Weigh-in history</summary><div id="weighList" class="weigh-list"></div></details>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Goal planner</h2>
+        <div id="gTypeSeg" class="seg seg-3">
+          <button type="button" data-gt="lose">Lose fat</button>
+          <button type="button" data-gt="maintain">Maintain</button>
+          <button type="button" data-gt="gain">Gain</button>
+        </div>
+        <div id="goalInputs" class="mt12"></div>
+        <label class="check"><input id="gActive" type="checkbox">
+          <span>Use this plan for my daily calorie target<span class="sub">The Today screen will use this week’s plan calories. Turn off to use your manual target in Settings.</span></span></label>
+        <div id="planOut"></div>
+      </div>
+
+      <div class="card how">
+        <h2 class="card-title">How this is calculated</h2>
+        <p><b>Lean body mass (LBM)</b> = weight × (1 − body fat %). If you haven’t entered body fat, LBM is estimated from height and weight (Boer formula) and marked “estimated”.</p>
+        <p><b>Maintenance calories (TDEE)</b> use the <b>Katch-McArdle</b> equation as the primary method: resting energy (BMR) = 370 + 21.6 × LBM (kg), multiplied by your activity factor (1.2–1.9). Because it is based on lean mass, it tends to suit people who know their body fat. <b>Mifflin-St Jeor</b> (based on weight, height, age and sex) is shown alongside for comparison. Both are estimates – real needs vary by a few hundred kcal, so adjust based on your actual trend after 2–3 weeks.</p>
+        <p><b>Rate of loss:</b> a loss of roughly 0.5–1.0% of body weight per week is widely recommended to help retain lean mass; the default is 0.7%/week. The plan slows to at most 0.5%/week once you are lean (under about 15% body fat for men, 25% for women), because leaner people lose more muscle with aggressive deficits.</p>
+        <p><b>Energy maths:</b> about 7,700 kcal per kg of body-weight change. The projection assumes about 85% of the weight you lose is fat and 15% lean tissue – roughly what’s typical when protein is adequate and you do some resistance training. Expect a quicker drop in the first week or two on keto as stored glycogen and water are lost; the trend then settles. For gaining, a 5–10% surplus is used and gain is assumed to be roughly half lean, half fat.</p>
+        <p><b>Safety limits:</b> daily calories never go below your estimated BMR, never more than 25% below TDEE, and never below 1,500 kcal (men) or 1,200 kcal (women). Maintenance is recalculated each week as your projected weight falls, so the calorie target steps down gradually.</p>
+        <p><b>Protein:</b> around 1.6–2.2 g per kg of lean body mass per day is commonly recommended to preserve muscle while dieting. The planner flags it if your protein % at the plan’s calorie level falls below 1.6 g/kg LBM.</p>
+        <p class="muted small">These are general estimates, not medical advice. Speak to your GP before large dietary changes, especially if you take medication for diabetes or blood pressure.</p>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="view-settings" class="view" aria-label="Settings">
+      <div class="card">
+        <h2 class="card-title">Daily targets</h2>
+        <label class="check"><input id="usePlan" type="checkbox">
+          <span>Use my Body &amp; Goals plan for the daily calorie target<span class="sub" id="planSrcInfo"></span></span></label>
+        <label class="field">
+          <span class="field-label" id="setKcalLabel">Calorie target (kcal per day)</span>
+          <input id="setKcal" type="number" inputmode="numeric" min="500" max="6000" step="10">
+        </label>
+        <div class="pct-grid">
+          <label class="field"><span class="field-label"><i class="dot fat"></i>Fat %</span><input id="setFat" type="number" inputmode="decimal" min="0" max="100" step="1"></label>
+          <label class="field"><span class="field-label"><i class="dot protein"></i>Protein %</span><input id="setProtein" type="number" inputmode="decimal" min="0" max="100" step="1"></label>
+          <label class="field"><span class="field-label"><i class="dot carbs"></i>Net carbs %</span><input id="setCarbs" type="number" inputmode="decimal" min="0" max="100" step="1"></label>
+        </div>
+        <div id="pctNote" class="note"></div>
+        <div id="gramTargets" class="gram-targets"></div>
+        <p class="muted small">Grams = calories × % ÷ 9 for fat, ÷ 4 for protein and net carbs. Changes save automatically.</p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Backup &amp; restore</h2>
+        <div class="note warn">Your food log is stored only on this device, inside Safari. <strong>Clearing Safari history/website data (or deleting the app) wipes it</strong> unless you have a backup. Export a backup regularly and save it to Files or iCloud Drive.</div>
+        <div class="row mt12">
+          <button id="exportBtn" class="btn primary" type="button">Export backup</button>
+          <button id="importBtn" class="btn outline" type="button">Import backup</button>
+        </div>
+        <input id="importFile" type="file" accept="application/json,.json" hidden>
+        <div id="backupInfo" class="muted small mt8"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">About</h2>
+        <p class="small">Product data from <a href="https://uk.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a> (free, community-maintained, ODbL licence) – always check against the pack if something looks wrong.</p>
+        <p class="small">UK/EU labels already list carbohydrate <em>excluding</em> fibre, so by default carbs are treated as net carbs and fibre is shown separately. For US-style labels, switch off “Carbs on label already exclude fibre” for that food and fibre will be subtracted.</p>
+        <p class="muted small">Not medical advice. Keto Tracker <span id="appVersion"></span></p>
+        <button id="clearBtn" class="btn danger-outline block mt12" type="button">Delete all data</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Main">
+    <button class="tab active" data-view="today" type="button"><span class="tab-ico" aria-hidden="true">&#9673;</span><span>Today</span></button>
+    <button class="tab" data-view="add" type="button"><span class="tab-ico plus" aria-hidden="true">+</span><span>Add</span></button>
+    <button class="tab" data-view="history" type="button"><span class="tab-ico" aria-hidden="true">&#9636;</span><span>History</span></button>
+    <button class="tab" data-view="body" type="button"><span class="tab-ico" aria-hidden="true">&#9878;&#xFE0E;</span><span>Body</span></button>
+    <button class="tab" data-view="settings" type="button"><span class="tab-ico" aria-hidden="true">&#9881;&#xFE0E;</span><span>Settings</span></button>
+  </nav>
+
+  <!-- Bottom sheet (portion / manual entry) -->
+  <div id="sheetBackdrop" class="sheet-backdrop" hidden></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
+    <div class="sheet-handle"></div>
+    <div id="sheetBody"></div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/html5-qrcode.min.js" defer></script>
+  <script src="body.js" defer></script>
+  <script src="scales.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
