@@ -11,6 +11,7 @@ A mobile-first, offline-capable keto macro tracker (PWA) for iPhone Safari. No a
 - Calorie-% targets (default 70% fat / 25% protein / 5% net carbs), dashboard rings, amber at 80% / red over the net-carb limit
 - History (7/30 days), keto streak
 - Body & Goals: weigh-ins (kg or st/lb; cm or ft/in), 7-day trends, Katch-McArdle TDEE (Mifflin-St Jeor for comparison), goal planner with week-by-week projection feeding the daily calorie target
+- Photo (AI estimate): user's own OpenAI key (Settings, stored only in localStorage, excluded from backups), photo downscaled to ≤1024 px JPEG and sent directly to api.openai.com (default model gpt-4o-mini, editable); editable review card before adding
 - Scale import: URL import (`#/import?weight=82.4&bf=24.1&muscle=38.2&water=55&date=2026-09-27`, `unit=lb|st`), clipboard/paste text extraction, CSV import with column detection/mapping (`sample-scales.csv`)
 
 ## Deploy (any static host)

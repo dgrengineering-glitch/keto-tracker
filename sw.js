@@ -1,5 +1,5 @@
 /* Keto Tracker service worker – offline app shell. Bump VERSION on every deploy. */
-const VERSION = 'kt-v1.2.0';
+const VERSION = 'kt-v1.3.0';
 const SHELL = [
   './',
   './index.html',
@@ -7,6 +7,7 @@ const SHELL = [
   './app.js',
   './body.js',
   './scales.js',
+  './ai.js',
   './manifest.json',
   './vendor/html5-qrcode.min.js',
   './icons/icon-192.png',

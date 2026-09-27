@@ -1,7 +1,7 @@
 /* Keto Tracker – offline-first keto macro tracker. Data lives in localStorage. */
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const STORE_KEY = 'ketoTracker.v1';
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snacks'];
 const MEAL_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snacks: 'Snacks' };
@@ -768,7 +768,7 @@ function renderSettings() {
   $('#setFat').value = s.pct.fat; $('#setProtein').value = s.pct.protein; $('#setCarbs').value = s.pct.carbs;
   $('#appVersion').textContent = 'v' + APP_VERSION;
   $('#usePlan').checked = !!db.goal.active;
-  updateTargetInfo(); updateBackupInfo();
+  updateTargetInfo(); updateBackupInfo(); renderAiSettings();
 }
 function updateTargetInfo() {
   const s = db.settings, g = targets();
@@ -920,12 +920,13 @@ function bind() {
   ['#setKcal', '#setFat', '#setProtein', '#setCarbs'].forEach(s => $(s).addEventListener('input', saveTargets));
   $('#usePlan').addEventListener('change', (e) => { db.goal.active = e.target.checked; save(); updateTargetInfo(); });
   bindBody();
+  bindAi();
   $('#exportBtn').addEventListener('click', exportBackup);
   $('#importBtn').addEventListener('click', () => $('#importFile').click());
   $('#importFile').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; if (f) importBackup(f); e.target.value = ''; });
   $('#clearBtn').addEventListener('click', () => {
     if (!confirm('Delete ALL your data (log, foods and settings) from this phone? This cannot be undone. Export a backup first if unsure.')) return;
-    localStorage.removeItem(STORE_KEY); db = normalise({}); viewDate = todayKey(); save(); renderSettings(); toast('All data deleted');
+    localStorage.removeItem(STORE_KEY); localStorage.removeItem('ketoTracker.openaiKey'); db = normalise({}); viewDate = todayKey(); save(); renderSettings(); toast('All data deleted');
   });
 
   // keep "today" correct if the app is left open past midnight

@@ -84,7 +84,12 @@
         <div id="lookupSpinner" class="muted small center mt8" hidden><span class="spinner"></span> Looking up on Open Food Facts…</div>
       </div>
 
-      <button id="manualBtn" class="btn big outline block" type="button"><span aria-hidden="true">&#9998;</span> Enter food manually</button>
+      <div class="two add-alt">
+        <button id="manualBtn" class="btn big outline" type="button"><span aria-hidden="true">&#9998;</span> Enter manually</button>
+        <button id="photoBtn" class="btn big outline" type="button"><span aria-hidden="true">&#10024;</span> Photo (AI estimate)</button>
+      </div>
+      <input id="aiFileCapture" type="file" accept="image/*" capture="environment" hidden>
+      <input id="aiFileChoose" type="file" accept="image/*" hidden>
 
       <div class="card">
         <div id="foodTabs" class="seg seg-3" role="tablist">
@@ -224,6 +229,21 @@
         <p class="muted small">Grams = calories × % ÷ 9 for fat, ÷ 4 for protein and net carbs. Changes save automatically.</p>
       </div>
 
+      <div class="card" id="aiCard">
+        <h2 class="card-title">Photo estimates (AI)</h2>
+        <p class="small">“Photo (AI estimate)” in Add food sends your meal photo to OpenAI using <b>your own API key</b>. Get one at <b>platform.openai.com › API keys</b> (you’ll need to add some credit under Billing). You pay OpenAI directly per photo – usually a fraction of a penny with the default model.</p>
+        <div id="aiKeyStatus" class="note"></div>
+        <label class="field"><span class="field-label">OpenAI API key</span>
+          <input id="aiKeyInput" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-…"></label>
+        <div class="row">
+          <button id="aiSaveKey" class="btn primary" type="button">Save key</button>
+          <button id="aiClearKey" class="btn danger-outline" type="button">Clear key</button>
+        </div>
+        <label class="field mt12"><span class="field-label">Model</span>
+          <input id="aiModelInput" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="gpt-4o-mini"></label>
+        <p class="muted small">The key is stored only on this phone (never in backups, never shown in full) and is sent only to api.openai.com. Leave the model blank for the default (gpt-4o-mini); any vision-capable OpenAI model name works.</p>
+      </div>
+
       <div class="card">
         <h2 class="card-title">Backup &amp; restore</h2>
         <div class="note warn">Your food log is stored only on this device, inside Safari. <strong>Clearing Safari history/website data (or deleting the app) wipes it</strong> unless you have a backup. Export a backup regularly and save it to Files or iCloud Drive.</div>
@@ -265,6 +285,7 @@
   <script src="vendor/html5-qrcode.min.js" defer></script>
   <script src="body.js" defer></script>
   <script src="scales.js" defer></script>
+  <script src="ai.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>
