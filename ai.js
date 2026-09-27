@@ -41,27 +41,17 @@ function downscaleImage(file, maxSide = 1024, quality = 0.8) {
 
 /* ---------- API ---------- */
 class AiError extends Error { constructor(kind, msg) { super(msg); this.kind = kind; } }
-async function callOpenAI(dataUrl, hint) {
+// Shared OpenAI request: maps failures to AiError kinds. `init.body` may be JSON (object) or FormData.
+async function openaiRequest(url, bodyObj, timeoutMs = 60000) {
   const key = aiKey();
   if (!key) throw new AiError('nokey', 'No API key');
-  const model = aiModel();
-  const body = {
-    model,
-    response_format: { type: 'json_object' },
-    max_completion_tokens: 1500,
-    messages: [
-      { role: 'system', content: AI_SYSTEM_PROMPT },
-      { role: 'user', content: [
-        { type: 'text', text: 'Estimate the nutrition for this meal.' + (hint ? ` Extra information from the user: ${hint}` : '') },
-        { type: 'image_url', image_url: { url: dataUrl, detail: 'auto' } }
-      ] }
-    ]
-  };
-  if (/^gpt-4/i.test(model)) body.temperature = 0.2;
-  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 60000);
+  const isForm = typeof FormData !== 'undefined' && bodyObj instanceof FormData;
+  const headers = { Authorization: 'Bearer ' + key };
+  if (!isForm) headers['Content-Type'] = 'application/json';
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let res;
   try {
-    res = await fetch(AI_ENDPOINT, { method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, body: JSON.stringify(body) });
+    res = await fetch(url, { method: 'POST', signal: ctrl.signal, headers, body: isForm ? bodyObj : JSON.stringify(bodyObj) });
   } catch (e) {
     clearTimeout(timer);
     throw new AiError('network', e && e.name === 'AbortError' ? 'timeout' : 'network');
@@ -69,15 +59,34 @@ async function callOpenAI(dataUrl, hint) {
   clearTimeout(timer);
   let payload = null; try { payload = await res.json(); } catch (e) { /* not JSON */ }
   if (!res.ok) {
-    const code = payload && payload.error && (payload.error.code || payload.error.type) || '';
+    const err = (payload && payload.error) || {};
+    const code = String(err.code || err.type || '');
+    const msg = String(err.message || '');
     if (res.status === 401) throw new AiError('badkey', 'unauthorised');
-    if (res.status === 429) throw new AiError(/quota|billing/i.test(code) ? 'quota' : 'rate', String(code));
-    if (res.status === 404 || /model/i.test(code)) throw new AiError('model', String(code));
+    if (res.status === 429) throw new AiError(/quota|billing/i.test(code + ' ' + msg) ? 'quota' : 'rate', code);
+    if (res.status === 404 || /model/i.test(code) || ((res.status === 400 || res.status === 403) && /model/i.test(msg))) throw new AiError('model', code);
     throw new AiError('http', 'HTTP ' + res.status);
   }
-  const content = payload && payload.choices && payload.choices[0] && payload.choices[0].message && payload.choices[0].message.content;
+  if (!payload) throw new AiError('format', 'not json');
+  return payload;
+}
+async function chatJSON(messages) {
+  const model = aiModel();
+  const body = { model, response_format: { type: 'json_object' }, max_completion_tokens: 1500, messages };
+  if (/^gpt-4/i.test(model)) body.temperature = 0.2;
+  const payload = await openaiRequest(AI_ENDPOINT, body);
+  const content = payload.choices && payload.choices[0] && payload.choices[0].message && payload.choices[0].message.content;
   if (!content) throw new AiError('format', 'empty');
   return parseAiJson(content);
+}
+async function callOpenAI(dataUrl, hint) {
+  return chatJSON([
+    { role: 'system', content: AI_SYSTEM_PROMPT },
+    { role: 'user', content: [
+      { type: 'text', text: 'Estimate the nutrition for this meal.' + (hint ? ` Extra information from the user: ${hint}` : '') },
+      { type: 'image_url', image_url: { url: dataUrl, detail: 'auto' } }
+    ] }
+  ]);
 }
 function parseAiJson(content) {
   let txt = String(content).trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
@@ -170,7 +179,7 @@ async function runEstimate() {
   try {
     const out = await callOpenAI(aiState.dataUrl, $('#aiHint').value.trim());
     if (!out.items.length) { showAiError(out.notes ? 'No food found: ' + out.notes : 'No food could be identified in that photo.'); return; }
-    aiState.items = out.items; aiState.notes = out.notes;
+    aiState.items = out.items; aiState.notes = out.notes; aiState.source = 'photo';
     renderAiReview();
   } catch (e) {
     const kind = e && e.kind;
@@ -186,10 +195,13 @@ function aiItemMacros(it) {
 }
 function renderAiReview() {
   const meal = segValue('aiMeal') || addMeal;
+  const voice = aiState.source === 'voice';
+  sheetCtx = { ai: true, voice };
   openSheet(`
     <h2 id="sheetTitle">Check the estimate</h2>
-    <div class="note warn"><b>Photo estimates can easily be off by 20% or more</b> – especially portion sizes and hidden oils or butter. Adjust the grams if you know better.</div>
+    <div class="note warn"><b>${voice ? 'Voice' : 'Photo'} estimates can easily be off by 20% or more</b> – especially portion sizes and hidden oils or butter. Adjust the grams if you know better.</div>
     ${aiState.dataUrl ? `<img class="ai-thumb" src="${aiState.dataUrl}" alt="">` : ''}
+    ${voice ? `<div class="you-said"><span class="field-label">You said</span>“${esc(aiState.transcript || '')}” <button id="vEditText" class="linkish" type="button">Edit</button></div>` : ''}
     ${aiState.notes ? `<div class="note small"><b>AI’s assumptions:</b> ${esc(aiState.notes)}</div>` : ''}
     <div id="aiItems"></div>
     <div id="aiTotals" class="preview"></div>
@@ -197,7 +209,7 @@ function renderAiReview() {
     ${mealSegHtml(meal, 'aiMeal')}
     <div class="sheet-actions">
       <button id="aiAdd" class="btn primary big" type="button">Add to log</button>
-      <button id="aiRetake" class="btn outline big" type="button">Try another photo</button>
+      <button id="aiRetake" class="btn outline big" type="button">${voice ? '🎤 Record again' : 'Try another photo'}</button>
       <button class="btn big" type="button" data-close>Cancel</button>
     </div>`);
   renderAiItems();
@@ -240,9 +252,9 @@ function commitAi() {
   items.forEach(it => {
     const f = 100 / it.grams0; const b = it.base;
     list.push({
-      id: uid(), meal, foodId: 'ai:' + uid(), name: it.name.trim() || 'Food', brand: 'Photo estimate', barcode: '',
+      id: uid(), meal, foodId: 'ai:' + uid(), name: it.name.trim() || 'Food', brand: aiState.source === 'voice' ? 'Voice estimate' : 'Photo estimate', barcode: '',
       per100: { kcal: b.kcal * f, fat: b.fat * f, protein: b.protein * f, carbs: b.carbs * f, fibre: b.fibre * f },
-      grams: it.grams, netOnLabel: false, servingG: null, servingLabel: '', image: '', ts: Date.now(), src: 'ai'
+      grams: it.grams, netOnLabel: false, servingG: null, servingLabel: '', image: '', ts: Date.now(), src: aiState.source === 'voice' ? 'voice' : 'ai'
     });
   });
   addMeal = meal;
@@ -271,7 +283,8 @@ function bindAi() {
     else if (e.target.closest('#aiChoose')) $('#aiFileChoose').click();
     else if (e.target.closest('#aiRun')) runEstimate();
     else if (e.target.closest('#aiAdd')) commitAi();
-    else if (e.target.closest('#aiRetake')) openPhotoSheet();
+    else if (e.target.closest('#aiRetake')) { if (sheetCtx.voice) openVoiceSheet({ autostart: true }); else openPhotoSheet(); }
+    else if (e.target.closest('#vEditText')) openVoiceSheet({ text: aiState.transcript || '' });
     else if (e.target.closest('#aiGoSettings') || e.target.closest('#aiErrSettings')) { e.preventDefault(); closeSheet(); showView('settings'); setTimeout(() => $('#aiCard').scrollIntoView({ block: 'start' }), 50); }
     else if (e.target.closest('[data-airemove]')) { aiState.items.splice(+e.target.closest('[data-airemove]').dataset.airemove, 1); renderAiItems(); }
     else if (e.target.closest('[data-segname="aiMeal"]')) setTimeout(updateAiTotals, 0);

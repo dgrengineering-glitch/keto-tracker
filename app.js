@@ -1,7 +1,7 @@
 /* Keto Tracker – offline-first keto macro tracker. Data lives in localStorage. */
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const STORE_KEY = 'ketoTracker.v1';
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snacks'];
 const MEAL_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snacks: 'Snacks' };
@@ -600,6 +600,8 @@ function openManualSheet(prefill = {}, notice = '', editFoodId = null) {
   sheetCtx = { manual: true, editFoodId, prefill };
   openSheet(`
     <h2 id="sheetTitle">${f ? 'Edit food' : 'Add food manually'}</h2>
+    ${f ? '' : `<button id="mVoice" class="voice-btn mt8" type="button"><span class="mic" aria-hidden="true">🎤</span><span class="vb-text"><b>Speak your food</b><small>e.g. “two scrambled eggs with a slice of toast”</small></span></button>
+    <div class="or-sep"><span>or type it in</span></div>`}
     ${notice ? `<div class="notice">${esc(notice)}</div>` : '<div class="muted small mt8">Copy the values from the nutrition label.</div>'}
     <label class="field mt12"><span class="field-label">Food name *</span><input id="mName" type="text" autocomplete="off" value="${esc(f ? f.name : prefill.name || '')}" placeholder="e.g. Greek yoghurt"></label>
     <div class="two">
@@ -631,7 +633,6 @@ function openManualSheet(prefill = {}, notice = '', editFoodId = null) {
       <button class="btn big" type="button" data-close>Cancel</button>
     </div>`);
   updateManualPreview();
-  if (!f) setTimeout(() => { const n = $('#mName'); if (n && !n.value) n.focus(); }, 250);
 }
 function readManual() {
   const mode = segValue('mMode') || 'portion';
@@ -921,6 +922,7 @@ function bind() {
   $('#usePlan').addEventListener('change', (e) => { db.goal.active = e.target.checked; save(); updateTargetInfo(); });
   bindBody();
   bindAi();
+  bindVoice();
   $('#exportBtn').addEventListener('click', exportBackup);
   $('#importBtn').addEventListener('click', () => $('#importFile').click());
   $('#importFile').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; if (f) importBackup(f); e.target.value = ''; });
