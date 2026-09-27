@@ -1,7 +1,7 @@
 /* Keto Tracker – offline-first keto macro tracker. Data lives in localStorage. */
 'use strict';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 const STORE_KEY = 'ketoTracker.v1';
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snacks'];
 const MEAL_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snacks: 'Snacks' };
@@ -484,6 +484,7 @@ function openSheet(html) {
   document.body.style.overflow = 'hidden';
 }
 function closeSheet() {
+  if (typeof teardownVoice === 'function' && typeof V !== 'undefined' && V.state !== 'idle') teardownVoice();
   $('#sheet').hidden = true; $('#sheetBackdrop').hidden = true;
   $('#sheetBody').innerHTML = ''; sheetCtx = null;
   document.body.style.overflow = '';

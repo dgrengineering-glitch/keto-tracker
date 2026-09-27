@@ -393,6 +393,14 @@ code { font: 13px ui-monospace, Menlo, monospace; background: var(--bg); padding
 .rec-sub { font-size: 12.5px; opacity: .85; }
 .rec-level { width: 70%; height: 8px; border-radius: 4px; background: rgba(255,255,255,.25); overflow: hidden; }
 .rec-level i { display: block; height: 100%; width: 8%; background: #fff; border-radius: 4px; transition: width .08s linear; }
+.rec-btn { position: relative; z-index: 2; touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.rec-btn:active { transform: scale(.985); }
+.rec-btn *, .rec-btn *::before, .rec-btn *::after { pointer-events: none; }
+.rec-pulse { display: flex; gap: 5px; align-items: flex-end; height: 18px; }
+.rec-pulse i { display: block; width: 6px; height: 100%; border-radius: 3px; background: #fff; opacity: .85; animation: recbar 1s ease-in-out infinite; transform-origin: bottom; }
+.rec-pulse i:nth-child(2) { animation-delay: .15s; } .rec-pulse i:nth-child(3) { animation-delay: .3s; } .rec-pulse i:nth-child(4) { animation-delay: .45s; } .rec-pulse i:nth-child(5) { animation-delay: .6s; }
+@keyframes recbar { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+.v-cancel { touch-action: manipulation; position: relative; z-index: 2; }
 .rec-busy { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 26px 10px; background: var(--bg); border-radius: 18px; font-weight: 600; text-align: center; }
 .spinner.big-spin { width: 34px; height: 34px; border-width: 4px; margin: 0; }
 .you-said { background: var(--bg); border-radius: 12px; padding: 10px 12px; font-size: 14.5px; margin: 0 0 8px; }

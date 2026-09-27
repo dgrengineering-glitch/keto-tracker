@@ -42,22 +42,32 @@ function downscaleImage(file, maxSide = 1024, quality = 0.8) {
 /* ---------- API ---------- */
 class AiError extends Error { constructor(kind, msg) { super(msg); this.kind = kind; } }
 // Shared OpenAI request: maps failures to AiError kinds. `init.body` may be JSON (object) or FormData.
-async function openaiRequest(url, bodyObj, timeoutMs = 60000) {
+async function openaiRequest(url, bodyObj, timeoutMs = 60000, extSignal = null) {
   const key = aiKey();
   if (!key) throw new AiError('nokey', 'No API key');
   const isForm = typeof FormData !== 'undefined' && bodyObj instanceof FormData;
   const headers = { Authorization: 'Bearer ' + key };
   if (!isForm) headers['Content-Type'] = 'application/json';
-  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  if (extSignal && extSignal.aborted) throw new AiError('cancelled', 'cancelled');
+  const ctrl = new AbortController(); let cancelled = false;
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const onExt = () => { cancelled = true; ctrl.abort(); };
+  if (extSignal) extSignal.addEventListener('abort', onExt);
+  const done = () => { clearTimeout(timer); if (extSignal) extSignal.removeEventListener('abort', onExt); };
   let res;
   try {
     res = await fetch(url, { method: 'POST', signal: ctrl.signal, headers, body: isForm ? bodyObj : JSON.stringify(bodyObj) });
   } catch (e) {
-    clearTimeout(timer);
+    done();
+    if (cancelled) throw new AiError('cancelled', 'cancelled');
     throw new AiError('network', e && e.name === 'AbortError' ? 'timeout' : 'network');
   }
-  clearTimeout(timer);
-  let payload = null; try { payload = await res.json(); } catch (e) { /* not JSON */ }
+  let payload = null;
+  try { payload = await res.json(); } catch (e) {
+    if (cancelled) { done(); throw new AiError('cancelled', 'cancelled'); }
+    if (e && e.name === 'AbortError') { done(); throw new AiError('network', 'timeout'); }
+  }
+  done();
   if (!res.ok) {
     const err = (payload && payload.error) || {};
     const code = String(err.code || err.type || '');
@@ -70,11 +80,11 @@ async function openaiRequest(url, bodyObj, timeoutMs = 60000) {
   if (!payload) throw new AiError('format', 'not json');
   return payload;
 }
-async function chatJSON(messages) {
+async function chatJSON(messages, signal = null, timeoutMs = 60000) {
   const model = aiModel();
   const body = { model, response_format: { type: 'json_object' }, max_completion_tokens: 1500, messages };
   if (/^gpt-4/i.test(model)) body.temperature = 0.2;
-  const payload = await openaiRequest(AI_ENDPOINT, body);
+  const payload = await openaiRequest(AI_ENDPOINT, body, timeoutMs, signal);
   const content = payload.choices && payload.choices[0] && payload.choices[0].message && payload.choices[0].message.content;
   if (!content) throw new AiError('format', 'empty');
   return parseAiJson(content);
