@@ -230,18 +230,18 @@
       </div>
 
       <div class="card" id="aiCard">
-        <h2 class="card-title">Photo estimates (AI)</h2>
-        <p class="small">“Photo (AI estimate)” in Add food sends your meal photo to OpenAI using <b>your own API key</b>. Get one at <b>platform.openai.com › API keys</b> (you’ll need to add some credit under Billing). You pay OpenAI directly per photo – usually a fraction of a penny with the default model.</p>
+        <h2 class="card-title">AI estimates (xAI Grok)</h2>
+        <p class="small">“Photo (AI estimate)” and “Speak your food” use xAI’s Grok with <b>your own xAI API key</b>. Get one at <b>console.x.ai</b> › API Keys – it’s pay as you go: buy a little prepaid credit under Billing and each photo or meal costs a fraction of a penny.</p>
         <div id="aiKeyStatus" class="note"></div>
-        <label class="field"><span class="field-label">OpenAI API key</span>
-          <input id="aiKeyInput" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-…"></label>
+        <label class="field"><span class="field-label">xAI (Grok) API key</span>
+          <input id="aiKeyInput" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="xai-…"></label>
         <div class="row">
           <button id="aiSaveKey" class="btn primary" type="button">Save key</button>
           <button id="aiClearKey" class="btn danger-outline" type="button">Clear key</button>
         </div>
-        <label class="field mt12"><span class="field-label">Model</span>
-          <input id="aiModelInput" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="gpt-4o-mini"></label>
-        <p class="muted small">The key is stored only on this phone (never in backups, never shown in full) and is sent only to api.openai.com. Leave the model blank for the default (gpt-4o-mini); any vision-capable OpenAI model name works.</p>
+        <label class="field mt12"><span class="field-label">Grok model (advanced)</span>
+          <input id="aiModelInput" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="grok-4.3"></label>
+        <p class="muted small">The key is stored only on this phone (never in backups, never shown in full) and is sent only to xAI (api.x.ai). Leave the model blank for the default (grok-4.3, which reads photos and text). Voice recordings are transcribed with xAI’s speech-to-text (grok-voice-transcribe-2.0).</p>
       </div>
 
       <div class="card">

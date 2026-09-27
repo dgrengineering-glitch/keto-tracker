@@ -1,7 +1,7 @@
 /* Keto Tracker – offline-first keto macro tracker. Data lives in localStorage. */
 'use strict';
 
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.5.0';
 const STORE_KEY = 'ketoTracker.v1';
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snacks'];
 const MEAL_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snacks: 'Snacks' };
@@ -52,7 +52,7 @@ function normalise(d) {
   const s = d.settings && typeof d.settings === 'object' ? d.settings : {};
   const body = { ...DEFAULT_BODY, ...(d.body && typeof d.body === 'object' ? d.body : {}) };
   if (!Array.isArray(body.weighIns)) body.weighIns = [];
-  const { calc, ...settingsRest } = s; // legacy calculator fields
+  const { calc, aiModel, ...settingsRest } = s; // legacy calculator fields; pre-1.5 AI model name (not a Grok model)
   return {
     version: 2,
     settings: { ...DEFAULT_SETTINGS, ...settingsRest, pct: { ...DEFAULT_SETTINGS.pct, ...(s.pct || {}) } },
@@ -929,7 +929,7 @@ function bind() {
   $('#importFile').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; if (f) importBackup(f); e.target.value = ''; });
   $('#clearBtn').addEventListener('click', () => {
     if (!confirm('Delete ALL your data (log, foods and settings) from this phone? This cannot be undone. Export a backup first if unsure.')) return;
-    localStorage.removeItem(STORE_KEY); localStorage.removeItem('ketoTracker.openaiKey'); db = normalise({}); viewDate = todayKey(); save(); renderSettings(); toast('All data deleted');
+    localStorage.removeItem(STORE_KEY); localStorage.removeItem(AI_KEY_STORE); LEGACY_KEY_STORES.forEach(k => localStorage.removeItem(k)); db = normalise({}); viewDate = todayKey(); save(); renderSettings(); toast('All data deleted');
   });
 
   // keep "today" correct if the app is left open past midnight

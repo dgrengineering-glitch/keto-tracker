@@ -1,13 +1,15 @@
-/* Keto Tracker – "Speak your food": record → OpenAI transcription → AI decode → shared review card.
-   Fallbacks: live dictation via SpeechRecognition, or type / use the iPhone keyboard mic. */
+/* Keto Tracker – "Speak your food": record → xAI Grok speech-to-text → Grok decode → shared review card.
+   Fallbacks: live dictation via SpeechRecognition, or type / use the iPhone keyboard mic, then Grok decode. */
 'use strict';
 
-const TRANSCRIBE_ENDPOINT = 'https://api.openai.com/v1/audio/transcriptions';
-const TRANSCRIBE_MODELS = ['gpt-4o-mini-transcribe', 'whisper-1'];
+const TRANSCRIBE_ENDPOINT = XAI_BASE + '/stt';   // xAI Speech to Text (REST, multipart upload)
+const TRANSCRIBE_MODELS = ['grok-voice-transcribe-2.0', 'grok-voice-transcribe-1.0'];
 const VOICE_MAX_SECS = 30;
 // Timeouts are `let` so tests can shorten them.
 let VOICE_STOP_FALLBACK_MS = 1500;  // if MediaRecorder never fires 'stop' (seen on iOS WebKit), assemble chunks anyway
 let VOICE_API_TIMEOUT_MS = 45000;   // transcription / decode request timeout
+// Words to bias speech-to-text towards (UK food vocabulary that is often mis-heard).
+const VOICE_KEYTERMS = ['rashers', 'semi-skimmed', 'halloumi', 'Quorn', 'crumpet', 'courgette', 'aubergine'];
 // Single source of truth for the voice sheet. state: idle | starting | recording | stopping | processing | dictating
 const V = { state: 'idle', session: 0, rec: null, dict: null, abort: null, timer: null, meter: null, lastTap: 0 };
 
@@ -24,7 +26,8 @@ function srClass() { return window.SpeechRecognition || window.webkitSpeechRecog
 function canRecord() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder); }
 function isIOSDevice() { return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 function pickMime() {
-  const opts = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+  // xAI STT auto-detects MP4/M4A (iPhone records AAC in MP4), OGG/Opus, WAV, MP3…; WebM is the last resort.
+  const opts = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'];
   if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
   return opts.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch (e) { return false; } }) || '';
 }
@@ -88,9 +91,9 @@ function openVoiceSheet(opts = {}) {
       <textarea id="vText" rows="3" placeholder="e.g. two scrambled eggs with a slice of toast and butter">${esc(opts.text || '')}</textarea></label>
     <p class="muted small" style="margin-top:-4px">Tip: you can also tap the 🎤 on the iPhone keyboard to dictate straight into this box.</p>
     <div id="vErr" class="note bad" hidden></div>
-    ${hasKey ? '' : `<div class="note warn small"><b>Decoding needs your OpenAI key.</b> Get one at platform.openai.com › API keys, then paste it in Settings › Photo estimates (AI). <a href="#" id="vGoSettings">Open Settings</a></div>`}
+    ${hasKey ? '' : `<div class="note warn small"><b>Recording and decoding need your xAI (Grok) API key.</b> Get one at console.x.ai › API Keys (pay as you go), then paste it in Settings › AI estimates (xAI Grok). Until then you can still dictate or type what you ate and add it manually. <a href="#" id="vGoSettings">Open Settings</a></div>`}
     <div class="sheet-actions">
-      <button id="vDecode" class="btn primary big" type="button">✨ Decode with AI</button>
+      <button id="vDecode" class="btn primary big" type="button">✨ Decode with Grok</button>
       <button id="vManual" class="btn outline big" type="button">Type it in manually instead</button>
       <button class="btn big" type="button" data-close>Close</button>
     </div>`);
@@ -259,7 +262,7 @@ async function processAudio(blob, mime, session) {
     if (session !== V.session || (e && e.kind === 'cancelled')) return;
     V.abort = null;
     setVoiceState('idle', { again: true });
-    voiceError(voiceErrorMessage(e, 'transcribe'), { settings: ['nokey', 'badkey', 'quota'].includes(e && e.kind), typeIt: true });
+    voiceError(voiceErrorMessage(e, 'transcribe'), { settings: ['nokey', 'badkey', 'quota', 'perm', 'model'].includes(e && e.kind), typeIt: true });
     return;
   }
   if (session !== V.session || !voiceSheetOpen()) return;
@@ -272,17 +275,18 @@ async function transcribe(blob, mime, signal) {
   let lastErr;
   for (const model of TRANSCRIBE_MODELS) {
     const fd = new FormData();
-    fd.append('file', blob, 'voice.' + extFor(mime));
+    // xAI requires the options before the file, and `file` as the last field.
     fd.append('model', model);
     fd.append('language', 'en');
-    fd.append('response_format', 'json');
-    fd.append('prompt', 'British English. Someone describing food and drink they have eaten, with amounts, e.g. "two rashers of back bacon, a slice of wholemeal toast with butter, a mug of tea with a splash of semi-skimmed milk".');
+    fd.append('format', 'true'); // Inverse Text Normalisation: "two hundred grams" → "200 g"
+    VOICE_KEYTERMS.forEach(k => fd.append('keyterm', k));
+    fd.append('file', blob, 'voice.' + extFor(mime));
     try {
-      const payload = await openaiRequest(TRANSCRIBE_ENDPOINT, fd, VOICE_API_TIMEOUT_MS, signal);
+      const payload = await xaiRequest(TRANSCRIBE_ENDPOINT, fd, VOICE_API_TIMEOUT_MS, signal);
       return String(payload.text || '').trim();
     } catch (e) {
       lastErr = e;
-      if (e && e.kind === 'model') continue; // fall back to whisper-1
+      if (e && e.kind === 'model') continue; // fall back to grok-voice-transcribe-1.0
       throw e;
     }
   }
@@ -354,10 +358,7 @@ async function decodeTranscript(sessionFromAudio) {
   setVoiceState('processing', { label: 'Working out the food and macros…' });
   const ctrl = new AbortController(); V.abort = ctrl;
   try {
-    const out = await chatJSON([
-      { role: 'system', content: VOICE_SYSTEM_PROMPT },
-      { role: 'user', content: `What I ate: ${text}` }
-    ], ctrl.signal, VOICE_API_TIMEOUT_MS);
+    const out = await grokJSON(VOICE_SYSTEM_PROMPT, `What I ate: ${text}`, ctrl.signal, VOICE_API_TIMEOUT_MS);
     if (session !== V.session || !voiceSheetOpen()) return;
     V.abort = null;
     if (!out.items.length) { setVoiceState('idle', { again: true }); voiceError(out.notes ? 'No food found: ' + out.notes : 'I couldn’t find any food in that – try describing it again.'); return; }
@@ -368,13 +369,14 @@ async function decodeTranscript(sessionFromAudio) {
     if (session !== V.session || (e && e.kind === 'cancelled')) return;
     V.abort = null;
     setVoiceState('idle', { again: true });
-    voiceError(voiceErrorMessage(e, 'decode'), { settings: ['nokey', 'badkey', 'model', 'quota'].includes(e && e.kind) });
+    voiceError(voiceErrorMessage(e, 'decode'), { settings: ['nokey', 'badkey', 'model', 'quota', 'perm'].includes(e && e.kind) });
   }
 }
 function voiceErrorMessage(e, stage) {
   if (e && e.kind === 'format') return stage === 'transcribe' ? 'The transcription reply couldn’t be read – please try again.' : 'The AI reply couldn’t be read. Try again, or describe the food a little differently.';
-  if (e && e.kind === 'model' && stage === 'transcribe') return 'OpenAI’s transcription models aren’t available on your account.';
-  if (e && e.kind === 'network' && e.message === 'timeout') return stage === 'transcribe' ? 'OpenAI took too long to transcribe your recording – check your connection and try again.' : 'OpenAI took too long to reply – check your connection and try again.';
+  if (e && e.kind === 'model' && stage === 'transcribe') return 'xAI’s speech-to-text models aren’t available to your API key – allow them at console.x.ai › API Keys, or type it instead.';
+  if (e && e.kind === 'audio') return 'xAI couldn’t read that recording format – type it instead, or use the 🎤 on the iPhone keyboard.';
+  if (e && e.kind === 'network' && e.message === 'timeout') return stage === 'transcribe' ? 'xAI took too long to transcribe your recording – check your connection and try again.' : 'xAI took too long to reply – check your connection and try again.';
   return aiErrorMessage(e);
 }
 

@@ -1,23 +1,58 @@
-/* Keto Tracker – "Estimate from photo" using the user's own OpenAI API key.
-   The key lives only in this device's localStorage (separate from backups) and is sent only to api.openai.com. */
+/* Keto Tracker – AI features ("Estimate from photo" and "Speak your food") using the user's own xAI (Grok) API key.
+   The key lives only in this device's localStorage (separate from backups) and is sent only to api.x.ai. */
 'use strict';
 
-const AI_KEY_STORE = 'ketoTracker.openaiKey';
-const AI_DEFAULT_MODEL = 'gpt-4o-mini';
-const AI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
+const AI_KEY_STORE = 'ketoTracker.xaiKey';
+const LEGACY_KEY_STORES = ['ketoTracker.openaiKey']; // pre-1.5 keys – deleted on start-up, never used
+const XAI_BASE = 'https://api.x.ai/v1';
+const AI_ENDPOINT = XAI_BASE + '/responses';          // xAI Responses API
+const AI_DEFAULT_MODEL = 'grok-4.3';                  // text + image input, structured outputs, cheapest Grok 4 tier
 let aiState = null; // { dataUrl, items:[{name, grams0, grams, base:{kcal,fat,protein,carbs,fibre}, confidence}], notes }
 
+(function purgeLegacyKeys() { try { LEGACY_KEY_STORES.forEach(k => localStorage.removeItem(k)); } catch (e) { /* ignore */ } })();
 function aiKey() { try { return localStorage.getItem(AI_KEY_STORE) || ''; } catch (e) { return ''; } }
-function aiModel() { return (db.settings.aiModel || '').trim() || AI_DEFAULT_MODEL; }
-function maskKey(k) { return k ? (k.slice(0, 3) + '…' + k.slice(-4)) : ''; }
+function aiModel() {
+  const m = String((db.settings && db.settings.xaiModel) || '').trim();
+  return m && /^grok/i.test(m) ? m : AI_DEFAULT_MODEL; // only Grok models – anything else falls back to the default
+}
+function maskKey(k) { return k ? (k.slice(0, 4) + '…' + k.slice(-4)) : ''; }
 
 const AI_SYSTEM_PROMPT = `You are a nutrition estimation assistant for a UK user following a ketogenic diet.
 Identify each distinct food or drink visible in the photo. Estimate the edible portion weight in grams as served, and estimate its nutrition using typical UK values (UK food composition data and typical UK product labels).
 Include likely hidden ingredients – cooking oil, butter, sauces, dressings, sugar in drinks – as separate items when reasonably likely, and state those assumptions in "notes".
 Rules: total_carbs_g INCLUDES fibre; net_carbs_g = total_carbs_g - fibre_g. confidence is "high", "medium" or "low". All numbers are plain numbers (no units, no ranges). Use British English.
 Reply with ONLY a JSON object (no markdown) in exactly this shape:
-{"items":[{"name":string,"estimated_grams":number,"kcal":number,"fat_g":number,"protein_g":number,"total_carbs_g":number,"fibre_g":number,"net_carbs_g":number,"confidence":"high"|"medium"|"low"}],"totals":{"kcal":number,"fat_g":number,"protein_g":number,"total_carbs_g":number,"fibre_g":number,"net_carbs_g":number},"notes":string}
-If there is no food in the image, return {"items":[],"totals":{"kcal":0,"fat_g":0,"protein_g":0,"total_carbs_g":0,"fibre_g":0,"net_carbs_g":0},"notes":"<why>"}.`;
+{"items":[{"name":string,"estimated_grams":number,"kcal":number,"fat_g":number,"protein_g":number,"total_carbs_g":number,"fibre_g":number,"net_carbs_g":number,"confidence":"high"|"medium"|"low"}],"notes":string}
+If there is no food in the image, return {"items":[],"notes":"<why>"}.`;
+
+// JSON Schema for xAI structured outputs (guarantees the reply shape).
+const FOOD_SCHEMA = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          estimated_grams: { type: 'number' },
+          kcal: { type: 'number' },
+          fat_g: { type: 'number' },
+          protein_g: { type: 'number' },
+          total_carbs_g: { type: 'number' },
+          fibre_g: { type: 'number' },
+          net_carbs_g: { type: 'number' },
+          confidence: { type: 'string', enum: ['high', 'medium', 'low'] }
+        },
+        required: ['name', 'estimated_grams', 'kcal', 'fat_g', 'protein_g', 'total_carbs_g', 'fibre_g', 'net_carbs_g', 'confidence'],
+        additionalProperties: false
+      }
+    },
+    notes: { type: 'string' }
+  },
+  required: ['items', 'notes'],
+  additionalProperties: false
+};
 
 /* ---------- image handling ---------- */
 function downscaleImage(file, maxSide = 1024, quality = 0.8) {
@@ -41,8 +76,8 @@ function downscaleImage(file, maxSide = 1024, quality = 0.8) {
 
 /* ---------- API ---------- */
 class AiError extends Error { constructor(kind, msg) { super(msg); this.kind = kind; } }
-// Shared OpenAI request: maps failures to AiError kinds. `init.body` may be JSON (object) or FormData.
-async function openaiRequest(url, bodyObj, timeoutMs = 60000, extSignal = null) {
+// Shared xAI request: maps failures to AiError kinds. `bodyObj` may be a plain object (sent as JSON) or FormData.
+async function xaiRequest(url, bodyObj, timeoutMs = 60000, extSignal = null) {
   const key = aiKey();
   if (!key) throw new AiError('nokey', 'No API key');
   const isForm = typeof FormData !== 'undefined' && bodyObj instanceof FormData;
@@ -68,35 +103,59 @@ async function openaiRequest(url, bodyObj, timeoutMs = 60000, extSignal = null) 
     if (e && e.name === 'AbortError') { done(); throw new AiError('network', 'timeout'); }
   }
   done();
-  if (!res.ok) {
-    const err = (payload && payload.error) || {};
-    const code = String(err.code || err.type || '');
-    const msg = String(err.message || '');
-    if (res.status === 401) throw new AiError('badkey', 'unauthorised');
-    if (res.status === 429) throw new AiError(/quota|billing/i.test(code + ' ' + msg) ? 'quota' : 'rate', code);
-    if (res.status === 404 || /model/i.test(code) || ((res.status === 400 || res.status === 403) && /model/i.test(msg))) throw new AiError('model', code);
-    throw new AiError('http', 'HTTP ' + res.status);
-  }
+  if (!res.ok) throw xaiHttpError(res.status, payload);
   if (!payload) throw new AiError('format', 'not json');
   return payload;
 }
-async function chatJSON(messages, signal = null, timeoutMs = 60000) {
-  const model = aiModel();
-  const body = { model, response_format: { type: 'json_object' }, max_completion_tokens: 1500, messages };
-  if (/^gpt-4/i.test(model)) body.temperature = 0.2;
-  const payload = await openaiRequest(AI_ENDPOINT, body, timeoutMs, signal);
-  const content = payload.choices && payload.choices[0] && payload.choices[0].message && payload.choices[0].message.content;
+// xAI errors look like {"code":"...","error":"Incorrect API key provided..."}; also accept {"error":{"message","code"}}.
+function xaiHttpError(status, payload) {
+  const p = payload || {};
+  const errObj = p.error && typeof p.error === 'object' ? p.error : {};
+  const msg = String(typeof p.error === 'string' ? p.error : (errObj.message || p.message || ''));
+  const code = String(p.code || errObj.code || errObj.type || '');
+  const all = code + ' ' + msg;
+  if (status === 401 || /incorrect api key|invalid api key|api key (is )?(invalid|not valid|revoked|disabled|blocked|expired)|no api key|missing api key/i.test(all)) return new AiError('badkey', 'unauthorised');
+  if (/credit|licen[cs]e|spending limit|billing|balance|insufficient funds|payment required/i.test(all) && [402, 403, 429].includes(status)) return new AiError('quota', code);
+  if (status === 429) return new AiError('rate', code);
+  if (status === 404 || ((status === 400 || status === 403) && /model/i.test(all))) return new AiError('model', code);
+  if (status === 403) return new AiError('perm', code);
+  if (status === 400 && /audio|format|decode|unsupported|codec|container/i.test(all)) return new AiError('audio', code);
+  return new AiError('http', 'HTTP ' + status);
+}
+function responseText(payload) {
+  if (!payload) return '';
+  if (typeof payload.output_text === 'string' && payload.output_text) return payload.output_text;
+  const out = Array.isArray(payload.output) ? payload.output : [];
+  for (const item of out) {
+    if (item && item.type === 'message' && Array.isArray(item.content)) {
+      const t = item.content.filter(c => c && c.type === 'output_text' && typeof c.text === 'string').map(c => c.text).join('');
+      if (t) return t;
+    }
+  }
+  return '';
+}
+// Ask Grok for food items as structured JSON. `userContent` is a string or an array of input_text/input_image parts.
+async function grokJSON(systemPrompt, userContent, signal = null, timeoutMs = 60000) {
+  const body = {
+    model: aiModel(),
+    store: false, // don't keep the photo/text on xAI's side for later retrieval (and advised when sending images)
+    max_output_tokens: 6000,
+    input: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent }
+    ],
+    text: { format: { type: 'json_schema', name: 'food_estimate', schema: FOOD_SCHEMA, strict: true } }
+  };
+  const payload = await xaiRequest(AI_ENDPOINT, body, timeoutMs, signal);
+  const content = responseText(payload);
   if (!content) throw new AiError('format', 'empty');
   return parseAiJson(content);
 }
-async function callOpenAI(dataUrl, hint) {
-  return chatJSON([
-    { role: 'system', content: AI_SYSTEM_PROMPT },
-    { role: 'user', content: [
-      { type: 'text', text: 'Estimate the nutrition for this meal.' + (hint ? ` Extra information from the user: ${hint}` : '') },
-      { type: 'image_url', image_url: { url: dataUrl, detail: 'auto' } }
-    ] }
-  ]);
+async function estimatePhoto(dataUrl, hint, signal = null) {
+  return grokJSON(AI_SYSTEM_PROMPT, [
+    { type: 'input_image', image_url: dataUrl, detail: 'high' },
+    { type: 'input_text', text: 'Estimate the nutrition for this meal.' + (hint ? ` Extra information from the user: ${hint}` : '') }
+  ], signal);
 }
 function parseAiJson(content) {
   let txt = String(content).trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
@@ -120,27 +179,28 @@ function parseAiJson(content) {
 }
 function aiErrorMessage(e) {
   switch (e && e.kind) {
-    case 'nokey': return 'Add your OpenAI API key in Settings first.';
-    case 'badkey': return 'OpenAI rejected your API key – it may be mistyped, revoked or expired. Check it in Settings.';
-    case 'quota': return 'Your OpenAI account has no credit left. Add credit at platform.openai.com › Billing, then try again.';
-    case 'rate': return 'OpenAI is busy or you’ve hit a rate limit – wait a few seconds and try again.';
-    case 'model': return `The model “${aiModel()}” isn’t available on your OpenAI account. Check the model name in Settings (default: ${AI_DEFAULT_MODEL}).`;
-    case 'network': return e.message === 'timeout' ? 'OpenAI took too long to reply – check your connection and try again.' : 'Couldn’t reach OpenAI – check your internet connection and try again.';
+    case 'nokey': return 'Add your xAI (Grok) API key in Settings first.';
+    case 'badkey': return 'xAI rejected your API key – it may be mistyped, revoked or expired. Check it in Settings.';
+    case 'quota': return 'Your xAI account has no credit left (or hit its spending limit). Add credit at console.x.ai › Billing, then try again.';
+    case 'rate': return 'xAI is busy or you’ve hit a rate limit – wait a few seconds and try again.';
+    case 'model': return `The model “${aiModel()}” isn’t available to your xAI API key. Check the model name in Settings (default: ${AI_DEFAULT_MODEL}), or allow that model on the key at console.x.ai › API Keys.`;
+    case 'perm': return 'Your xAI API key isn’t allowed to do this. At console.x.ai › API Keys, edit the key and allow all endpoints and models (or create a new key with the defaults).';
+    case 'network': return e.message === 'timeout' ? 'xAI took too long to reply – check your connection and try again.' : 'Couldn’t reach xAI – check your internet connection and try again.';
     case 'format': return 'The AI reply couldn’t be read. Try again, or add a hint describing the meal.';
-    default: return 'Something went wrong asking OpenAI – please try again.';
+    default: return 'Something went wrong asking xAI – please try again.';
   }
 }
 
 /* ---------- UI ---------- */
 function noKeyHtml() {
-  return `<div class="note warn"><b>One-off setup needed:</b> photo estimates use your own OpenAI account.</div>
+  return `<div class="note warn"><b>One-off setup needed:</b> AI estimates use your own xAI (Grok) account – pay as you go.</div>
     <ol class="steps">
-      <li>On any browser, go to <b>platform.openai.com</b> and sign in (or create an account).</li>
-      <li>Add a little credit under <b>Settings › Billing</b> (each photo typically costs well under 1p with ${AI_DEFAULT_MODEL}, but you pay OpenAI directly per use).</li>
-      <li>Open <b>API keys</b>, tap <b>Create new secret key</b> and copy it (it starts with <code>sk-</code>).</li>
-      <li>In Keto Tracker go to <b>Settings › Photo estimates (AI)</b>, paste the key and tap <b>Save key</b>.</li>
+      <li>On any browser, go to <b>console.x.ai</b> and sign up or sign in.</li>
+      <li>Buy a little prepaid credit under <b>Billing</b> (you pay xAI directly, per use).</li>
+      <li>Open <b>API Keys</b>, tap <b>Create API key</b>, keep the default access (all models and endpoints) and copy the key (it starts with <code>xai-</code>).</li>
+      <li>In Keto Tracker go to <b>Settings › AI estimates (xAI Grok)</b>, paste the key and tap <b>Save key</b>.</li>
     </ol>
-    <p class="muted small">The key stays on this phone only (it isn’t included in backups) and is sent only to OpenAI.</p>
+    <p class="muted small">The key stays on this phone only (it isn’t included in backups) and is sent only to xAI (api.x.ai).</p>
     <div class="sheet-actions"><button id="aiGoSettings" class="btn primary big" type="button">Go to Settings</button><button class="btn big" type="button" data-close>Close</button></div>`;
 }
 function openPhotoSheet() {
@@ -150,7 +210,7 @@ function openPhotoSheet() {
   if (!aiKey()) { openSheet(`<h2 id="sheetTitle">Estimate from photo</h2>${noKeyHtml()}`); return; }
   openSheet(`
     <h2 id="sheetTitle">Estimate from photo</h2>
-    <p class="muted small">Take a photo of your plate from above, with everything visible. The AI (${esc(aiModel())}) estimates each item’s weight and macros for you to check.</p>
+    <p class="muted small">Take a photo of your plate from above, with everything visible. Grok (${esc(aiModel())}) estimates each item’s weight and macros for you to check.</p>
     <div id="aiPreview" class="ai-preview"><span class="muted small">No photo yet</span></div>
     <div class="two mt8">
       <button id="aiTake" class="btn primary" type="button">📷 Take photo</button>
@@ -187,13 +247,13 @@ async function runEstimate() {
   const btn = $('#aiRun'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Asking the AI…';
   $('#aiErr').hidden = true;
   try {
-    const out = await callOpenAI(aiState.dataUrl, $('#aiHint').value.trim());
+    const out = await estimatePhoto(aiState.dataUrl, $('#aiHint').value.trim());
     if (!out.items.length) { showAiError(out.notes ? 'No food found: ' + out.notes : 'No food could be identified in that photo.'); return; }
     aiState.items = out.items; aiState.notes = out.notes; aiState.source = 'photo';
     renderAiReview();
   } catch (e) {
     const kind = e && e.kind;
-    showAiError(aiErrorMessage(e), ['nokey', 'badkey', 'model', 'quota'].includes(kind));
+    showAiError(aiErrorMessage(e), ['nokey', 'badkey', 'model', 'quota', 'perm'].includes(kind));
   } finally {
     const b = $('#aiRun'); if (b) { b.disabled = false; b.textContent = 'Estimate macros'; }
   }
@@ -276,11 +336,11 @@ function commitAi() {
 /* ---------- settings ---------- */
 function renderAiSettings() {
   const k = aiKey();
-  $('#aiKeyStatus').innerHTML = k ? `Key saved on this phone: <b>${esc(maskKey(k))}</b>` : 'No key saved – photo estimates are off.';
+  $('#aiKeyStatus').innerHTML = k ? `Key saved on this phone: <b>${esc(maskKey(k))}</b>` : 'No key saved – AI photo and voice estimates are off.';
   $('#aiKeyInput').value = '';
-  $('#aiKeyInput').placeholder = k ? 'Paste a new key to replace it' : 'sk-…';
+  $('#aiKeyInput').placeholder = k ? 'Paste a new key to replace it' : 'xai-…';
   $('#aiClearKey').hidden = !k;
-  $('#aiModelInput').value = db.settings.aiModel || '';
+  $('#aiModelInput').value = db.settings.xaiModel || '';
   $('#aiModelInput').placeholder = AI_DEFAULT_MODEL;
 }
 function bindAi() {
@@ -305,15 +365,20 @@ function bindAi() {
     const n = e.target.closest('[data-ainame]'); if (n) aiState.items[+n.dataset.ainame].name = n.value;
   });
   $('#aiSaveKey').addEventListener('click', () => {
-    const v = $('#aiKeyInput').value.trim();
-    if (!v) { toast('Paste your API key first'); return; }
-    if (!/^sk-[A-Za-z0-9_\-]{10,}$/.test(v)) { toast('That doesn’t look like an OpenAI key (it should start with “sk-”)', 3500); return; }
+    const v = $('#aiKeyInput').value.trim().replace(/\s+/g, '');
+    if (!v) { toast('Paste your xAI API key first'); return; }
+    if (/^sk-/.test(v)) { toast('That isn’t an xAI key. Keto Tracker only uses xAI (Grok) – create a key at console.x.ai (it starts with “xai-”).', 4500); return; }
+    if (!/^xai-[A-Za-z0-9_\-]{16,}$/.test(v)) { toast('That doesn’t look like an xAI API key (it should start with “xai-”)', 3500); return; }
     try { localStorage.setItem(AI_KEY_STORE, v); } catch (e) { toast('Couldn’t save the key'); return; }
-    renderAiSettings(); toast('API key saved on this phone');
+    renderAiSettings(); toast('xAI API key saved on this phone');
   });
   $('#aiClearKey').addEventListener('click', () => {
-    if (!confirm('Remove your OpenAI API key from this phone?')) return;
+    if (!confirm('Remove your xAI API key from this phone?')) return;
     localStorage.removeItem(AI_KEY_STORE); renderAiSettings(); toast('API key removed');
   });
-  $('#aiModelInput').addEventListener('change', e => { db.settings.aiModel = e.target.value.trim(); save(); renderAiSettings(); });
+  $('#aiModelInput').addEventListener('change', e => {
+    const v = e.target.value.trim();
+    if (v && !/^grok/i.test(v)) { toast('Only Grok models work here (e.g. grok-4.3). Leave blank for the default.', 3500); e.target.value = db.settings.xaiModel || ''; return; }
+    db.settings.xaiModel = v; save(); renderAiSettings();
+  });
 }
