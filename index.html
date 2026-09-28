@@ -73,10 +73,17 @@
       </div>
 
       <div class="card scan-card">
-        <div id="reader" hidden></div>
-        <div id="scanStatus" class="muted small center" hidden>Point the camera at the barcode…</div>
+        <div id="reader" hidden>
+          <video id="scanVideo" playsinline webkit-playsinline muted autoplay disablepictureinpicture aria-label="Camera preview"></video>
+          <div class="scan-guide" aria-hidden="true"><span class="scan-laser"></span></div>
+        </div>
+        <div id="scanStatus" class="muted small center" hidden>Hold the barcode inside the box, about 15 cm away…</div>
         <button id="scanBtn" class="btn primary big" type="button"><span aria-hidden="true">&#128247;</span> Scan barcode</button>
         <button id="stopScanBtn" class="btn big outline" type="button" hidden>Stop camera</button>
+        <button id="scanPhotoBtn" class="btn big outline mt8" type="button"><span aria-hidden="true">&#128248;</span> Take photo of barcode</button>
+        <input id="scanPhotoInput" type="file" accept="image/*" capture="environment" hidden>
+        <div id="scanPhotoStatus" class="muted small center mt8" hidden><span class="spinner"></span> Reading the barcode from your photo…</div>
+        <div id="scanDecoder" hidden></div>
         <form id="barcodeForm" class="row mt12" autocomplete="off">
           <input id="barcodeInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="14" placeholder="Or type the barcode number" aria-label="Barcode number">
           <button class="btn" type="submit">Look up</button>

@@ -190,8 +190,11 @@ input:focus, select:focus { border-color: var(--primary-2); }
 .empty-meal { padding: 4px 16px 12px; font-size: 13.5px; color: var(--muted); }
 
 /* Scanner */
-.scan-card #reader { width: 100%; border-radius: 14px; overflow: hidden; background: #000; margin-bottom: 10px; min-height: 200px; }
-.scan-card #reader video { width: 100% !important; height: auto !important; display: block; object-fit: cover; }
+.scan-card #reader { position: relative; width: 100%; aspect-ratio: 4 / 3; border-radius: 14px; overflow: hidden; background: #000; margin-bottom: 10px; min-height: 200px; }
+.scan-card #reader video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; object-fit: cover; transform: scale(var(--scan-zoom, 1)); transform-origin: 50% 50%; }
+.scan-card .scan-guide { position: absolute; left: 8%; width: 84%; top: 50%; aspect-ratio: 2.4 / 1; transform: translateY(-50%); border: 3px solid rgba(255,255,255,.95); border-radius: 12px; box-shadow: 0 0 0 999px rgba(0,0,0,.38); pointer-events: none; }
+@supports not (aspect-ratio: 1 / 1) { .scan-card #reader { height: 0; padding-top: 75%; min-height: 0; } .scan-card .scan-guide { height: 35%; } }
+.scan-card .scan-laser { position: absolute; left: 6%; right: 6%; top: 50%; height: 2px; background: #ff3b30; box-shadow: 0 0 6px #ff3b30; opacity: .85; }
 #barcodeForm input { font-variant-numeric: tabular-nums; letter-spacing: .04em; }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 4px; }
 @keyframes spin { to { transform: rotate(360deg); } }

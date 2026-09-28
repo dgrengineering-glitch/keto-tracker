@@ -1,7 +1,7 @@
 /* Keto Tracker – offline-first keto macro tracker. Data lives in localStorage. */
 'use strict';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 const STORE_KEY = 'ketoTracker.v1';
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snacks'];
 const MEAL_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snacks: 'Snacks' };
@@ -81,8 +81,6 @@ let viewDate = todayKey();
 let addMeal = defaultMeal();
 let foodTab = 'recent';
 let historyRange = 7;
-let scanner = null;
-let scanning = false;
 let sheetCtx = null;
 
 /* ---------- maths ---------- */
@@ -325,60 +323,224 @@ function renderFoodList() {
 }
 
 /* ---------- barcode scanning ---------- */
+// v1.5.1 – iPhone fix. Until 1.5.0 we used html5-qrcode's own camera loop (Html5Qrcode.start). That only asks
+// for the camera's default size (640×480 on iOS) and then shrinks the boxed area into a canvas the size of the
+// on-screen box in CSS pixels (~290×170) before decoding. On an iPhone a real EAN-13 held at a distance the
+// camera can focus at reached the decoder at about 1 pixel per bar, so it was never read. iOS Safari has no
+// native BarcodeDetector, so there was no fallback either. Now we run the camera ourselves in HD, show a zoomed
+// preview (so the barcode is held further away, where it's in focus), and decode the boxed area at full video
+// resolution: native BarcodeDetector where the browser has one (Android/Chrome), plus ZXing from the vendored
+// html5-qrcode (the decoder used on iOS). "Take photo of barcode" decodes a still from the iPhone Camera.
+const SCAN_FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e'];
+const scan = { token: 0, stream: null, timer: 0, hintTimer: 0, native: undefined, zx: null, canvas: null, frame: 0, zoom: 1 };
 function lib() { return window.__Html5QrcodeLibrary__ || null; }
-async function startScan() {
+function zxing() {
+  if (scan.zx) return scan.zx;
   const L = lib();
-  if (!L) { toast('Scanner could not load – type the barcode instead'); return; }
+  if (!L) return null;
+  try {
+    const F = L.Html5QrcodeSupportedFormats;
+    scan.zx = new L.Html5Qrcode('scanDecoder', {
+      formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E],
+      verbose: false,
+      experimentalFeatures: { useBarCodeDetectorIfSupported: false }
+    });
+  } catch (e) { console.info('ZXing init failed', e); scan.zx = null; }
+  return scan.zx;
+}
+async function zxingDecode(canvas) {
+  const h = zxing();
+  if (!h) return '';
+  try {
+    // html5-qrcode 2.3.8 (vendored, pinned) keeps its ZXing decoder on .qrcode – decode our full-resolution canvas directly.
+    if (h.qrcode && typeof h.qrcode.decodeAsync === 'function') return String((await h.qrcode.decodeAsync(canvas)).text || '');
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    if (!blob) return '';
+    return String((await h.scanFileV2(new File([blob], 'frame.png', { type: 'image/png' }), false)).decodedText || '');
+  } catch (e) { return ''; }
+}
+async function nativeDetector() {
+  if (scan.native !== undefined) return scan.native;
+  scan.native = null;
+  try {
+    if ('BarcodeDetector' in window) {
+      const supported = await window.BarcodeDetector.getSupportedFormats();
+      const formats = SCAN_FORMATS.filter(f => supported.includes(f));
+      if (formats.length) scan.native = new window.BarcodeDetector({ formats });
+    }
+  } catch (e) { scan.native = null; }
+  return scan.native;
+}
+async function nativeDecode(src) {
+  if (!scan.native) return '';
+  try {
+    const found = await scan.native.detect(src);
+    const hit = (found || []).find(b => b && b.rawValue);
+    return hit ? String(hit.rawValue) : '';
+  } catch (e) { scan.native = null; return ''; } // broken implementation – use ZXing only from now on
+}
+async function openCamera() {
+  const tries = [
+    { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    { facingMode: { ideal: 'environment' } }
+  ];
+  let lastErr;
+  for (const video of tries) {
+    try { return await navigator.mediaDevices.getUserMedia({ audio: false, video }); }
+    catch (e) { lastErr = e; if (/NotAllowed|Security|Permission/i.test(String((e && (e.name || e.message)) || e))) break; }
+  }
+  throw lastErr;
+}
+function tuneFocus(track) {
+  try {
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (caps.focusMode && caps.focusMode.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+  } catch (e) { /* not supported (e.g. iOS) */ }
+}
+async function startScan() {
+  if (scan.stream) return;
+  if (!lib() && !('BarcodeDetector' in window)) { toast('Scanner could not load – type the barcode instead'); return; }
   if (!window.isSecureContext) { toast('The camera needs a secure (https) connection'); return; }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('Camera not available in this browser – type the barcode instead'); return; }
-  const F = L.Html5QrcodeSupportedFormats;
+  const token = ++scan.token;
   $('#reader').hidden = false; $('#scanStatus').hidden = false;
   $('#scanBtn').hidden = true; $('#stopScanBtn').hidden = false;
+  let stream;
   try {
-    if (!scanner) {
-      scanner = new L.Html5Qrcode('reader', {
-        formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E],
-        verbose: false,
-        experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-      });
-    }
-    await scanner.start(
-      { facingMode: 'environment' },
-      { fps: 12, qrbox: (w, h) => ({ width: Math.max(60, Math.floor(Math.min(w * 0.88, 340))), height: Math.max(60, Math.floor(Math.min(h * 0.45, 170))) }) },
-      onScanSuccess,
-      () => { /* per-frame "not found" – ignore */ }
-    );
-    scanning = true;
+    stream = await openCamera();
   } catch (err) {
-    scanning = false;
+    if (token !== scan.token) return;
     resetScanUI();
     const m = String((err && (err.name || err.message)) || err);
     if (/NotAllowed|Permission/i.test(m)) toast('Camera permission was denied. Allow it in Settings › Safari › Camera, or type the barcode.', 4500);
     else toast('Could not start the camera – type the barcode instead.', 3500);
     console.info('Camera start failed:', m);
+    return;
   }
+  if (token !== scan.token) { stream.getTracks().forEach(t => t.stop()); return; } // stopped while the permission prompt was up
+  scan.stream = stream;
+  const v = $('#scanVideo');
+  v.muted = true; v.setAttribute('playsinline', ''); v.setAttribute('muted', '');
+  v.srcObject = stream;
+  try { await v.play(); } catch (e) { /* autoplay + muted + playsinline: iOS starts it anyway */ }
+  const track = stream.getVideoTracks()[0];
+  if (track) tuneFocus(track);
+  await nativeDetector();
+  if (token !== scan.token) return;
+  if (!scan.native && !zxing()) { stopScan(); toast('Scanner could not load – type the barcode instead'); return; }
+  scan.hintTimer = setTimeout(() => { if (token === scan.token) toast('Having trouble? Hold steady about 15 cm away in good light, or use “Take photo of barcode”.', 5000); }, 15000);
+  scanFrame(token);
+}
+// The part of the video frame (in video pixels) under the on-screen guide box, padded a little.
+function scanRegion(v) {
+  const vw = v.videoWidth, vh = v.videoHeight;
+  const box = $('#reader').getBoundingClientRect(), g = $('#reader .scan-guide').getBoundingClientRect();
+  if (!box.width || !box.height || g.width < 8 || g.height < 8) return { x: vw * 0.1, y: vh * 0.3, w: vw * 0.8, h: vh * 0.4 };
+  const s = Math.max(box.width / vw, box.height / vh) * scan.zoom; // object-fit: cover, then scale(--scan-zoom)
+  const ox = (box.width - vw * s) / 2, oy = (box.height - vh * s) / 2;
+  const gw = g.width / s, gh = g.height / s;
+  const x = Math.max(0, (g.left - box.left - ox) / s - gw * 0.08), y = Math.max(0, (g.top - box.top - oy) / s - gh * 0.5);
+  return { x, y, w: Math.min(vw - x, gw * 1.16), h: Math.min(vh - y, gh * 2) };
+}
+async function scanFrame(token) {
+  if (token !== scan.token) return;
+  const v = $('#scanVideo');
+  if (v.readyState >= 2 && v.videoWidth && v.videoHeight) {
+    // Zoom the preview on HD streams so people hold the phone ~15 cm away (in focus) rather than right up close.
+    const zoom = Math.max(1, Math.min(2, Math.min(v.videoWidth, v.videoHeight) / 540));
+    if (zoom !== scan.zoom) { scan.zoom = zoom; $('#reader').style.setProperty('--scan-zoom', String(zoom)); }
+    const r = scanRegion(v);
+    const k = Math.min(1, 1280 / r.w);
+    const cw = Math.max(1, Math.round(r.w * k)), ch = Math.max(1, Math.round(r.h * k));
+    const c = scan.canvas || (scan.canvas = document.createElement('canvas'));
+    if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+    c.getContext('2d', { willReadFrequently: true }).drawImage(v, r.x, r.y, r.w, r.h, 0, 0, cw, ch);
+    scan.frame++;
+    const useNative = scan.native && scan.frame % 2 === 1; // alternate native/ZXing so a weak native detector can't block ZXing
+    const code = useNative ? await nativeDecode(c) : await zxingDecode(c);
+    if (token !== scan.token) return;
+    if (code && onScanSuccess(code, useNative ? 'native' : 'zxing')) return;
+  }
+  scan.timer = setTimeout(() => scanFrame(token), 60);
 }
 function resetScanUI() {
   $('#reader').hidden = true; $('#scanStatus').hidden = true;
   $('#scanBtn').hidden = false; $('#stopScanBtn').hidden = true;
 }
 async function stopScan() {
-  if (scanner && scanning) {
-    scanning = false;
-    try { await scanner.stop(); } catch (e) { /* already stopped */ }
-  }
+  scan.token++;
+  clearTimeout(scan.timer); clearTimeout(scan.hintTimer);
+  const s = scan.stream; scan.stream = null;
+  if (s) s.getTracks().forEach(t => { try { t.stop(); } catch (e) { /* already stopped */ } });
+  const v = $('#scanVideo');
+  if (v && v.srcObject) { try { v.pause(); } catch (e) { /* ignore */ } v.srcObject = null; }
   resetScanUI();
 }
 let lastScan = { code: '', at: 0 };
-function onScanSuccess(text) {
+function onScanSuccess(text, via) {
   const code = String(text || '').replace(/\D/g, '');
-  if (code.length < 8) return;
-  if (code === lastScan.code && Date.now() - lastScan.at < 3000) return;
+  if (code.length < 8) return false;
+  if (code === lastScan.code && Date.now() - lastScan.at < 3000) return false;
   lastScan = { code, at: Date.now() };
+  if (via) $('#reader').dataset.decoder = via;
   if (navigator.vibrate) navigator.vibrate(60);
   stopScan();
   $('#barcodeInput').value = code;
   lookupBarcode(code);
+  return true;
+}
+/* Take photo of barcode – the iPhone Camera focuses close and captures ~12 MP, so a still is very reliable. */
+function takeBarcodePhoto() {
+  stopScan(); // the live preview and the Camera sheet can't share the camera on iOS
+  $('#scanPhotoInput').click();
+}
+function loadPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => resolve({ img, url });
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read the photo')); };
+    img.src = url;
+  });
+}
+async function decodeBarcodePhoto(file) {
+  const { img, url } = await loadPhoto(file);
+  try {
+    const W = img.naturalWidth, H = img.naturalHeight;
+    await nativeDetector();
+    if (scan.native) { const n = await nativeDecode(img); if (n) return n; }
+    if (!zxing()) return '';
+    const c = document.createElement('canvas'), ctx = c.getContext('2d', { willReadFrequently: true });
+    // Decode a region (optionally turned 90°) scaled to at most 1600 px along the bars' axis.
+    const tryRegion = (sx, sy, sw, sh, rot) => {
+      const k = Math.min(1, 1600 / (rot ? sh : sw));
+      const dw = Math.max(1, Math.round(sw * k)), dh = Math.max(1, Math.round(sh * k));
+      c.width = rot ? dh : dw; c.height = rot ? dw : dh;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (rot) ctx.setTransform(0, 1, -1, 0, dh, 0);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      return zxingDecode(c);
+    };
+    // ZXing reads rows near the middle of an image, so try the whole photo, a centre crop, then overlapping bands.
+    for (const rot of [false, true]) {
+      const regions = [[0, 0, W, H], [W * 0.2, H * 0.2, W * 0.6, H * 0.6]];
+      for (let f = 0; f <= 0.7001; f += 0.14) regions.push(rot ? [W * f, 0, W * 0.3, H] : [0, H * f, W, H * 0.3]);
+      for (const [sx, sy, sw, sh] of regions) { const code = await tryRegion(sx, sy, sw, sh, rot); if (code) return code; }
+    }
+    // Last resort: html5-qrcode's own still-image scan at full resolution.
+    if (W * H <= 16e6) { try { return String((await zxing().scanFileV2(file, false)).decodedText || ''); } catch (e) { /* not found */ } }
+    return '';
+  } finally { URL.revokeObjectURL(url); }
+}
+async function scanPhotoFile(file) {
+  if (!lib() && !('BarcodeDetector' in window)) { toast('Scanner could not load – type the barcode instead'); return; }
+  $('#scanPhotoStatus').hidden = false; $('#scanPhotoBtn').disabled = true;
+  let code = '';
+  try { code = await decodeBarcodePhoto(file); } catch (e) { console.info('Photo barcode decode failed', e); }
+  $('#scanPhotoStatus').hidden = true; $('#scanPhotoBtn').disabled = false;
+  const digits = String(code || '').replace(/\D/g, '');
+  if (digits.length >= 8) { $('#reader').dataset.decoder = 'photo'; $('#barcodeInput').value = digits; lookupBarcode(digits); }
+  else toast('Couldn’t find a barcode in that photo. Fill the frame with the barcode, keep it sharp and well lit – or type the number.', 5000);
 }
 
 /* ---------- Open Food Facts ---------- */
@@ -872,6 +1034,8 @@ function bind() {
   $('#mealSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-meal]'); if (b) { addMeal = b.dataset.meal; renderAdd(); } });
   $('#scanBtn').addEventListener('click', startScan);
   $('#stopScanBtn').addEventListener('click', stopScan);
+  $('#scanPhotoBtn').addEventListener('click', takeBarcodePhoto);
+  $('#scanPhotoInput').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) scanPhotoFile(f); });
   $('#barcodeForm').addEventListener('submit', (e) => { e.preventDefault(); $('#barcodeInput').blur(); lookupBarcode($('#barcodeInput').value); });
   $('#manualBtn').addEventListener('click', () => openManualSheet({}));
   $('#foodTabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) { foodTab = b.dataset.tab; renderFoodList(); } });
